@@ -1,0 +1,118 @@
+<# Parse Minidumps Written by Charlize Veritas (Version: 1.0.0.3 Last Revision: 06/11/2019) #>
+
+# Load Assemblies
+[void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms')
+[void][System.Reflection.Assembly]::LoadWithPartialName('PresentationFramework')
+
+# Clear Variables
+Write-Host "Preparing Variables..."
+$Script:Version = "1.0.0.3"
+$Script:CurrentDir = $(Get-Location).Path
+$Script:TimeStamp = $(Get-Date -Format FileDateTime)
+$Script:LogFile = "$CurrentDir\ErrorLog - $TimeStamp.csv"
+$Script:ReportFile = "$CurrentDir\Report - $TimeStamp.csv"
+
+# Create Array of Release IDs
+$RELEASEID_CODES = @(
+	@{OSBUILD="7600"; RELEASEID="N/A"; Index="0"}
+	@{OSBUILD="7601"; RELEASEID="N/A"; Index="1"}
+    @{OSBUILD="10240"; RELEASEID="1507"; Index="2"}
+    @{OSBUILD="10586"; RELEASEID="1511"; Index="3"}
+    @{OSBUILD="14393"; RELEASEID="1607"; Index="4"}
+    @{OSBUILD="15063"; RELEASEID="1703"; Index="5"}
+    @{OSBUILD="16299"; RELEASEID="1709"; Index="6"}
+    @{OSBUILD="17134"; RELEASEID="1803"; Index="7"}
+    @{OSBUILD="17763"; RELEASEID="1809"; Index="8"}
+    @{OSBUILD="18362"; RELEASEID="1903"; Index="9"}
+    )
+
+# Find CDB.exe
+If (Test-Path -Path "C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe") {$Script:CBD = "C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe"}
+Else {
+    [System.Windows.MessageBox]::Show("CBD.EXE Not Found. Install Windows WDK Debugging Tools.`n`nPress OK to exit.","CBD.EXE Not Found",'Ok','Error') | Out-Null
+    exit
+    }
+
+# Prompt for Folder
+$FileDialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$FileDialog.rootfolder = "MyComputer"
+$FileDialog.Description = "Select Folder With Logs"   
+$Result = $FileDialog.ShowDialog((New-Object System.Windows.Forms.Form -Property @{TopMost = $True}))
+If ($Result -eq "OK") {$OutputFolder = $FileDialog.SelectedPath} Else {$OutputFolder = $Null}
+If (!($OutputFolder)) {
+    [System.Windows.MessageBox]::Show("No Folder was Selected.`n`nPress OK to exit.","No Folder Selected",'Ok','Error') | Out-Null
+    exit
+    }
+
+# Prepare Error Log
+Write-Host "Creating Log File..."
+$LogWriter = New-Object System.IO.StreamWriter $LogFile, $True
+$LogWriter.WriteLine("DATETIME,WSID,ERROR")
+$LogWriter.Close()
+
+# Prepare Report File
+Write-Host "Creating Report File..."
+$LogWriter = New-Object System.IO.StreamWriter $ReportFile, $True
+$LogWriter.WriteLine("WSID,STOP_ERROR,DEFAULT_BUCKET_ID,PROBABLE_CAUSE,BUGCHECK,ARG1,ARG2,ARG3,ARG4,IMAGE_NAME,IMAGE_LOAD,CUSTOMER_CRASH_COUNT,OSNAME,OSBUILD,RELEASE,OSSERVICEPACK,OSBUILD_TIMESTAMP,TARGET_TIME,SYSTEM_MANUFACTURER,SYSTEM_PRODUCT_NAME,SYSTEM_SKU,BIOS_VERSION,GOOGLE_LINK")
+$LogWriter.Close()
+
+# Compile Minidump Report
+Write-Host "Preparing to compile Minidump files..."
+$Filelist = Get-ChildItem -Path $OutputFolder -Recurse -Force -ErrorAction SilentlyContinue
+$Count = 0
+$Total = $Filelist.Count
+Foreach ($_ in $Filelist) {
+    $Count++
+    Write-Host "Parsing Log $($_.Name) into text ($Count of $Total)..."
+    $Commandline = '"' + $CBD + '" -z "' + "$($_.FullName)" + '" -c "!analyze -v;Q" > "' + "$OutputFolder\temp.log" +'"'
+    cmd.exe /c "$Commandline" | Out-Null
+    $InputFile = $Null
+    $InputFile = Get-Content -Path "$OutputFolder\temp.log" -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath "$OutputFolder\temp.log" -Force -ErrorAction SilentlyContinue
+    If ($InputFile -ne $Null) {
+        # Parse Data from File
+        $WSID = ($_.Name).split('@')[0]
+        Write-Host "Parsing data for $WSID into Report ($Count of $Total)..." -ForegroundColor 'White'
+        If ($InputFile | Select-String 'cdb: Reading initial command' -CaseSensitive -Context 0,7 -ErrorAction SilentlyContinue) {$InputFile | Select-String 'cdb: Reading initial command' -CaseSensitive -Context 0,7 -ErrorAction SilentlyContinue | ForEach-Object {$STOP_ERROR = ($_.Context.PostContext) | Select -Last 1}} Else {$STOP_ERROR = $Null}
+        If ($InputFile | Select-String 'Use !analyze -v to get detailed debugging information.' -CaseSensitive -Context 0,2 -ErrorAction SilentlyContinue) {$InputFile | Select-String 'Use !analyze -v to get detailed debugging information.' -CaseSensitive -Context 0,2 -ErrorAction SilentlyContinue | ForEach-Object {$BUGCHECK = ($_.Context.PostContext).Replace("BugCheck ","") | Select -Last 1}} Else {$BUGCHECK = $Null}
+        If ($InputFile | Select-String 'DEFAULT_BUCKET_ID:' -ErrorAction SilentlyContinue) {$DEFAULT_BUCKET_ID = (($InputFile | Select-String 'DEFAULT_BUCKET_ID:' -ErrorAction SilentlyContinue).ToString()).replace("DEFAULT_BUCKET_ID:  ","")} Else {$DEFAULT_BUCKET_ID = $Null}
+        If ($DEFAULT_BUCKET_ID) {
+            If ($InputFile | Select-String 'CUSTOMER_CRASH_COUNT:' -ErrorAction SilentlyContinue) {$CUSTOMER_CRASH_COUNT = (($InputFile | Select-String 'CUSTOMER_CRASH_COUNT:' -ErrorAction SilentlyContinue).ToString()).replace("CUSTOMER_CRASH_COUNT:  ","")} Else {$CUSTOMER_CRASH_COUNT = $Null}
+            If ($InputFile | Select-String 'OSNAME:' -ErrorAction SilentlyContinue) {$OSNAME = (($InputFile | Select-String 'OSNAME:' -ErrorAction SilentlyContinue).ToString()).replace("OSNAME:  ","")} Else {$OSNAME = $Null}
+            If ($InputFile | Select-String 'OSBUILD:' -ErrorAction SilentlyContinue) {$OSBUILD = (($InputFile | Select-String 'OSBUILD:' -ErrorAction SilentlyContinue).ToString()).replace("OSBUILD:  ","")} Else {$OSBUILD = $Null}
+            If ($OSBUILD) {$RELEASEID = ($RELEASEID_CODES | Where-Object {$_.OSBUILD -eq $OSBUILD}).RELEASEID} Else {$RELEASEID = $Null}
+            If ($OSNAME -like "*7*") {$OSBUILD = "6.1.$OSBUILD"}
+            ElseIf ($OSNAME -like "*10*") {$OSBUILD = "10.0.$OSBUILD"}
+            If ($InputFile | Select-String 'OSSERVICEPACK:' -ErrorAction SilentlyContinue) {$OSSERVICEPACK = (($InputFile | Select-String 'OSSERVICEPACK:' -ErrorAction SilentlyContinue).ToString()).replace("OSSERVICEPACK:  ","")} Else {$OSSERVICEPACK = $Null}
+            If ($InputFile | Select-String 'OSBUILD_TIMESTAMP:' -ErrorAction SilentlyContinue) {$OSBUILD_TIMESTAMP = (($InputFile | Select-String 'OSBUILD_TIMESTAMP:' -ErrorAction SilentlyContinue).ToString()).replace("OSBUILD_TIMESTAMP:  ","")} Else {$OSBUILD_TIMESTAMP = $Null}
+            If ($OSBUILD_TIMESTAMP) {$OSBUILD_TIMESTAMP = Get-Date $OSBUILD_TIMESTAMP -Format "yyyy/MM/dd HH:mm:ss"}
+            If ($InputFile | Select-String 'TARGET_TIME:' -ErrorAction SilentlyContinue) {$TARGET_TIME = (($InputFile | Select-String 'TARGET_TIME:' -ErrorAction SilentlyContinue).ToString()).replace("TARGET_TIME:  ","")} Else {$TARGET_TIME = $Null}
+            If ($TARGET_TIME) {$TARGET_TIME = Get-Date $TARGET_TIME -Format "yyyy/MM/dd HH:mm:ss"}
+            If ($InputFile | Select-String 'IMAGE_NAME:' -ErrorAction SilentlyContinue) {$IMAGE_NAME = (($InputFile | Select-String 'IMAGE_NAME:' -ErrorAction SilentlyContinue).ToString()).replace("IMAGE_NAME:  ","")} Else {$IMAGE_NAME = $Null}
+            $IMAGE_LOAD = (($InputFile | Select-String 'Unable to load image ' -ErrorAction SilentlyContinue))
+            If ($IMAGE_LOAD) {$IMAGE_LOAD = ($IMAGE_LOAD.ToString()).replace("Unable to load image ","")} Else {$IMAGE_LOAD = "N/A"}
+            $PROBABLE_CAUSE = (($InputFile | Select-String 'Probably caused by : ' -ErrorAction SilentlyContinue))
+            If ($PROBABLE_CAUSE) {$PROBABLE_CAUSE = ($PROBABLE_CAUSE.ToString()).replace("Probably caused by : ","")} Else {$PROBABLE_CAUSE = "N/A"}
+            If ($InputFile | Select-String 'SYSTEM_MANUFACTURER:' -ErrorAction SilentlyContinue) {$SYSTEM_MANUFACTURER = (($InputFile | Select-String 'SYSTEM_MANUFACTURER:' -ErrorAction SilentlyContinue).ToString()).replace("SYSTEM_MANUFACTURER:  ","")} Else {$SYSTEM_MANUFACTURER = $Null}
+            If ($InputFile | Select-String 'SYSTEM_PRODUCT_NAME:' -ErrorAction SilentlyContinue) {$SYSTEM_PRODUCT_NAME = (($InputFile | Select-String 'SYSTEM_PRODUCT_NAME:' -ErrorAction SilentlyContinue).ToString()).replace("SYSTEM_PRODUCT_NAME:  ","")} Else {$SYSTEM_PRODUCT_NAME = $Null}
+            If ($InputFile | Select-String 'SYSTEM_SKU:' -ErrorAction SilentlyContinue) {$SYSTEM_SKU = (($InputFile | Select-String 'SYSTEM_SKU:' -ErrorAction SilentlyContinue).ToString()).replace("SYSTEM_SKU:  ","")} Else {$SYSTEM_SKU = $Null}
+            If ($InputFile | Select-String 'BIOS_VERSION:' -ErrorAction SilentlyContinue) {$BIOS_VERSION = (($InputFile | Select-String 'BIOS_VERSION:' -ErrorAction SilentlyContinue).ToString()).replace("BIOS_VERSION:  ","")} Else {$BIOS_VERSION = $Null}
+            $ARG1 = [regex]::match($InputFile, "Arg1:(.*?)Arg2:").Groups[1].Value
+            $ARG2 = [regex]::match($InputFile, "Arg2:(.*?)Arg3:").Groups[1].Value
+            $ARG3 = [regex]::match($InputFile, "Arg3:(.*?)Arg4:").Groups[1].Value
+            $ARG4 = [regex]::match($InputFile, "Arg4:(.*?)Debugging Details").Groups[1].Value 
+            If ($STOP_ERROR -and $SYSTEM_MANUFACTURER -and $STOP_ERROR) {$GOOGLE_LINK = "$([char]34)$(("https://www.google.com/search?&q=$IMAGE_NAME+$SYSTEM_MANUFACTURER+$STOP_ERROR").Replace(" ","%20"))$([char]34)"} Else {$GOOGLE_LINK = $Null}
+            If ($GOOGLE_LINK) {$FORMATED_LINK = "=HYPERLINK($GOOGLE_LINK)"} Else {$FORMATED_LINK = $Null}
+            Write-Host "Appending $WSID data to Report File ($Count of $Total)..." -ForegroundColor 'Green'
+            $LogWriter = New-Object System.IO.StreamWriter $ReportFile, $True
+            $LogWriter.WriteLine("$([char]34)$($WSID)$([char]34),$([char]34)$($STOP_ERROR)$([char]34),$([char]34)$($DEFAULT_BUCKET_ID)$([char]34),$([char]34)$($PROBABLE_CAUSE)$([char]34),$([char]34)$($BUGCHECK)$([char]34),$([char]34)$($ARG1)$([char]34),$([char]34)$($ARG2)$([char]34),$([char]34)$($ARG3)$([char]34),$([char]34)$($ARG4)$([char]34),$([char]34)$($IMAGE_NAME)$([char]34),$([char]34)$($IMAGE_LOAD)$([char]34),$([char]34)$($CUSTOMER_CRASH_COUNT)$([char]34),$([char]34)$($OSNAME)$([char]34),$([char]34)$($OSBUILD)$([char]34),$([char]34)$($RELEASEID)$([char]34),$([char]34)$($OSSERVICEPACK)$([char]34),$([char]34)$($OSBUILD_TIMESTAMP)$([char]34),$([char]34)$($TARGET_TIME)$([char]34),$([char]34)$($SYSTEM_MANUFACTURER)$([char]34),$([char]34)$($SYSTEM_PRODUCT_NAME)$([char]34),$([char]34)$($SYSTEM_SKU)$([char]34),$([char]34)$($BIOS_VERSION)$([char]34),$FORMATED_LINK")
+            $LogWriter.Close()
+            }
+        }
+    Else {
+        Write-Host "Failed to parse data from $WSID ($Count of $Total)!" -ForegroundColor "Red"
+        $LogWriter = New-Object System.IO.StreamWriter $LogFile, $True
+        $LogWriter.WriteLine("$(Get-Date -Format "yyyy/MM/dd HH:mm:ss"),$ComputerName,Log Parse Failure")
+        $LogWriter.Close()        
+        }
+    }
