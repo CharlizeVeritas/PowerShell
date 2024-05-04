@@ -1,2 +1,2 @@
 # PowerShell
-My PowerShell Scripts
+PowerShell Scripts for demonstrating my skills.
