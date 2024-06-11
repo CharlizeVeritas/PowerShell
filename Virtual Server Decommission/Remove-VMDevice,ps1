@@ -1,0 +1,191 @@
+<#
+  .SYNOPSIS
+  Decommissions a Device Record from the VMWare Server.
+
+  .DESCRIPTION
+
+  This script will decommision a Device Record from the VMWare Server by first
+  disabling the network adapter, renaming it, moving it to the decommision
+  folder, and finally editing the notes with the Change Control number, the 
+  Action date, the Requestor, and Excuted by the VMUser account. If the script
+  encounters any error along the way it will output a  brief text explanation of
+  the issue along with the exception message if present.
+
+  .PARAMETER username
+  Specifies the Username of the User with access to the Jump Server.
+
+  .PARAMETER password
+  Specifies the password of the User with access to the Jump Server.
+
+  .PARAMETER JumpServer
+  Specifies the Fully Qualified Domain Name (FQDN) of the Jump Server that contains
+  the modules and dlls needed to run this script.
+
+  .PARAMETER VMServer
+  Specifies the Fully Qualified Domain Name (FQDN) of the VMWare Server.
+
+  .PARAMETER vmhostname
+  Specifies the Hostname / ServerName of the VM Server record to decommision.
+  Note: This is the Fully Qualified Domain Name (FQDN) of the server.
+
+  .PARAMETER VMUser
+  Specifies the username of the user that has rights to the VMWare Server.
+
+  .PARAMETER VMPass
+  Specifies the password of the user that has rights to the VMWare Server.
+
+  .PARAMETER DecomFolder
+  Folder to place the VM that is being decommisioned.
+
+  .PARAMETER ChangeRequest
+  The number or ID of the Change Request for the decommision task.
+
+  .PARAMETER Requestor
+  Name or username of the Requestor in the related Change Request.
+
+  .OUTPUTS
+  Remove-VMDevice.ps1 will output any Exception Messages if they occur.
+
+  .EXAMPLE
+  PS> .\Remove-VMDevice,ps1 -username XXXXX -password Password1! -JumpServer XXXXXXXXXX.yyyyy.com -VMServer YYYYY.domain.com -vmhostname YYYYY -VMUser ZZZZZ -VMPass Password1! -DecomFolder 'Folder Name' -ChangeRequest XXXYYYYYY -Requestor 'John Smith'
+#>
+
+Param([Parameter(Mandatory=$true)][string]$username,
+    [Parameter(Mandatory=$true)][string]$password,
+    [Parameter(Mandatory=$true)][string]$JumpServer,
+    [Parameter(Mandatory=$true)][string]$VMServer,
+    [Parameter(Mandatory=$true)][string]$vmhostname,
+    [Parameter(Mandatory=$true)][string]$VMUser,
+    [Parameter(Mandatory=$true)][string]$VMPass,
+    [Parameter(Mandatory=$true)][string]$DecomFolder,
+    [Parameter(Mandatory=$true)][string]$ChangeRequest,
+    [Parameter(Mandatory=$true)][string]$Requestor
+    )
+
+# Create Credential Object from User Information
+$PWord = ConvertTo-SecureString -String $password -AsPlainText -Force
+Try {$Credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $username, $PWord -ErrorAction Stop}
+Catch {throw "FAILED: Error occured creating credential object for $($username): $($_.Exception.Message)"}
+
+# Create PS Session to Jumpserver
+Try {$Session = New-PSSession -ComputerName $JumpServer -Credential $Credential -ErrorAction Stop}
+Catch {throw "FAILED: Error occured creating session to $($JumpServer): $($_.Exception.Message)"}
+
+# Run Script on Jumpserver
+Invoke-Command -Session $Session -Command {
+param([string]$VMServer=$VMServer,
+[string]$vmhostname=$vmhostname,
+[string]$VMUser=$VMUser,
+[string]$VMPass=$VMPass,
+[string]$DecomFolder=$DecomFolder,
+[string]$ChangeRequest=$ChangeRequest,
+[string]$Requestor=$Requestor)
+
+# Create Credential Object
+$PWord = ConvertTo-SecureString -String $VMPass -AsPlainText -Force
+Try {$Credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $VMUser, $PWord -ErrorAction Stop}
+Catch {throw "FAILED: Error occured creating credential object for $($username): $($_.Exception.Message)"}
+
+# Clean $Requestor Object if Email Address
+If ($Requestor -like "*@*") {$Requestor = $Requestor.Split(".")[0] + " " + $Requestor.Split(".")[1].Split("@")[0]}
+
+# Import the "VMware.VimAutomation.Core" module
+If ((Get-Module "VMware.VimAutomation.Core" -WarningAction SilentlyContinue -ErrorAction SilentlyContinue) -eq $null) {
+    Try {Import-Module "VMware.VimAutomation.Core" -WarningAction SilentlyContinue -ErrorAction Stop}
+    Catch {throw "FAILED: Error occured loading VMware.VimAutomation.Core module: $($_.Exception.Message)"}
+    }
+
+# Connect to VM Server
+Try {Connect-VIServer -Server $VMServer -Credential $Credential -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null}
+Catch {throw "FAILED: Error occured connecting to $($VMServer): $($_.Exception.Message)"}
+
+# Get Device Object from VMWare
+Try {$Device = Get-VM -Name $vmhostname -Server $VMServer -WarningAction SilentlyContinue -ErrorAction Stop}
+Catch {$Device = $null} # This is to completely supress any errors from Get-VM when device not found
+
+# Return if no Device Found
+If (!$Device) {return "WARNING: No Device ID found for $vmhostname on VM server $VMServer (Please check manually)"}  
+
+# Power On vmhostname if Powered Off
+If ($Device.PowerState -ne 'PoweredOn') {
+
+    # Power On vmhostname
+    Try {$Device | Start-VM -Server $VMServer -Confirm:$False -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null}
+    Catch {throw "FAILED: Error occured powering on $vmhostname on VM Server $($VMServer): $($_.Exception.Message)"}
+
+    }
+
+# Disable Network Adapter
+Try {$Device | Get-NetworkAdapter -WarningAction SilentlyContinue -ErrorAction Stop | Set-NetworkAdapter -connected:$False -startconnected:$False -Confirm:$False -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null}
+Catch {throw "FAILED: Error occured disabling the Network Adapter for $($VMServer): $($_.Exception.Message)"}
+
+# Get Device Object from VMWare
+Try {$Device = Get-VM -Name $vmhostname -Server $VMServer -WarningAction SilentlyContinue -ErrorAction Stop}
+Catch {$Device = $null} # This is to completely supress any errors from Get-VM when device not found
+
+# Power Off vmhostname if Powered On
+If ($Device.PowerState -ne 'PoweredOff') {
+
+    # Power On vmhostname
+    Try {$Device | Stop-VM -Server $VMServer -Confirm:$False -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null}
+    Catch {throw "FAILED: Error occured powering off $vmhostname on VM Server $($VMServer): $($_.Exception.Message)"}
+    
+    }
+
+# Move Device to Decommision Folder
+Try {$Device | Move-VM -Destination $DecomFolder -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null}
+Catch {throw "FAILED: Error occured moving $($VMServer) to the 'To Be Decommissioned' folder: $($_.Exception.Message)"}
+
+# Create Note Object
+$NewNote = "CC # - $ChangeRequest
+Action Date - $(Get-Date)
+Requestor - $Requestor
+Executed by - $VMUser
+"
+
+# Edit Notes
+Try {$Device | Set-VM -Notes $NewNote -Confirm:$False -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null}
+Catch {throw "FAILED: Error editing Notes on $($VMServer): $($_.Exception.Message)"}
+
+# Create NewName Object (Retired-MMDDYY-ServerName)
+$NewName = "Retired-$(Get-Date -Format MMddyy)-$vmhostname"
+
+# Rename VM Device
+Try {$Device | Set-VM -Name $NewName -Confirm:$False -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null}
+Catch {throw "FAILED: Error editing Name on $($VMServer): $($_.Exception.Message)"}
+
+# Get DeviceTest Object to Verify Changes
+Try {$DeviceTest = Get-VM -Name $NewName -Server $VMServer -WarningAction SilentlyContinue -ErrorAction Stop}
+Catch {$Devicetest = $null} # This is to completely supress any errors from Get-VM when device not found
+
+# Get Network Adapter from Device Object
+Try {$NetworkAdpater = $DeviceTest | Get-NetworkAdapter -WarningAction SilentlyContinue -ErrorAction Stop}
+Catch {throw "FAILED: Error getting Network Adapter object for $vmhostname on $($VMServer): $($_.Exception.Message)"}
+
+# Verify Changes (Diable Network Adapter, Move Device to Decommision Folder, Edit Notes, and Rename VM Device
+If (($($NetworkAdpater.ConnectionState.Connected) -eq $False) -and ($($NetworkAdpater.ConnectionState.StartConnected) -eq $False) -and ($DeviceTest.Folder.Name -eq $DecomFolder) -and ($DeviceTest.Notes -like "*$ChangeRequest*") -and ($DeviceTest.Name -eq $NewName) -and ($DeviceTest.PowerState -eq "PoweredOff")) {
+    return "SUCCESS: Decommissioned Device ID $($DeviceTest.PersistentId) for $vmhostname on VMWare Server $VMServer"
+    }
+
+# Create Issues Object
+If ($($NetworkAdpater.ConnectionState.Connected) -ne $False) {$Issues = $Issues += "Network Adapter Connected set to $($NetworkAdpater.ConnectionState.Connected), "}
+If ($($NetworkAdpater.ConnectionState.StartConnected) -ne $False) {$Issues = $Issues += "Network Adapter StartConnected set to $($NetworkAdpater.ConnectionState.StartConnected), "}
+If ($DeviceTest.Folder.Name -ne $DecomFolder) {$Issues = $Issues += "Folder Name set to $($DeviceTest.Folder.Name), "}
+If ($DeviceTest.Notes -notlike "*$ChangeRequest*") {$Issues = $Issues += "Notes Not set correctly, "}
+If ($DeviceTest.Name -ne $NewName) {$Issues = $Issues += "Name not set to $($NewName), "}
+If ($DeviceTest.PowerState -ne "PoweredOff") {$Issues = $Issues += "VM Powered On, "}
+
+# Remove Last Space
+If ($($Issues.Substring($Issues.Length - 1)) -eq " ") {$Issues = $Issues.Substring(0,$Issues.Length-1)}
+
+# Remove Last Comma
+If ($($Issues.Substring($Issues.Length - 1)) -eq ",") {$Issues = $Issues.Substring(0,$Issues.Length-1)}
+
+# Return Failure
+Throw "FAILED: Error occured decommisioning $vmhostname on VMWare Server $VMServer. Issues Remain: $($Issues). (Please Check Manually)"
+
+} -ErrorAction Stop -ArgumentList $VMServer,$vmhostname,$VMUser,$VMPass, $DecomFolder, $ChangeRequest, $Requestor
+
+# Remove PS Session to JumpServer
+Try {Remove-PSSession -Session $Session -ErrorAction Stop}
+Catch {throw "FAILED: Error occured removing session to $($JumpServer): $($_.Exception.Message)"}
