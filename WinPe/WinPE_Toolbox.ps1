@@ -48,12 +48,12 @@
   X:\> powershell.exe -executionpolicy bypass -file .\WinPE_Toolbox.ps1 -pxelocation "X:\WinPE_Toolbox" -iconfile "icon.ico" -ahcibiosfile "DELL_BIOS_SETTINGS_AHCI_x64.exe" -raidbiosfile "DELL_BIOS_SETTINGS_RAID_x64.exe" -otherbiosfile "DELL_BIOS_SETTINGS_OTHER_x64.exe" -uploadpath "\\server\folder\WinPE_Toolbox
 #>
 
-Param([Parameter(Mandatory=$true)][string]$pxelocation = "X:\WinPE_Toolbox",
-    [Parameter(Mandatory=$true)][string]$iconfile = "icon.ico",
-    [Parameter(Mandatory=$true)][string]$ahcibiosfile = "DELL_BIOS_SETTINGS_AHCI_x64.exe",
-    [Parameter(Mandatory=$true)][string]$raidbiosfile = "DELL_BIOS_SETTINGS_RAID_x64.exe",
-    [Parameter(Mandatory=$true)][string]$otherbiosfile = "DELL_BIOS_SETTINGS_OTHER_x64.exe",
-    [Parameter(Mandatory=$true)][string]$uploadpath = "\\server\folder\WinPE_Toolbox"
+Param([Parameter(Mandatory=$true)][string]$pxelocation,
+    [Parameter(Mandatory=$true)][string]$iconfile,
+    [Parameter(Mandatory=$true)][string]$ahcibiosfile,
+    [Parameter(Mandatory=$true)][string]$raidbiosfile,
+    [Parameter(Mandatory=$true)][string]$otherbiosfile,
+    [Parameter(Mandatory=$true)][string]$uploadpath
     )
 
 # Script Variables
