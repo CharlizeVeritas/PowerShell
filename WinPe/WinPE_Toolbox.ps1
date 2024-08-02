@@ -3,6 +3,7 @@
   A simple GUI with WinPE Functions to aid in imaging Dell Windows computers.
 
   .DESCRIPTION
+  
   This script will create an interactive GUI for the user to run certain actions
   in WindowsPE. It requires three Dell Command MulitPlatform Packages as well as
   the Dell SMBIOS PowerShell provider to be installed on the WinPE image. The
