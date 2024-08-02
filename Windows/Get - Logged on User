@@ -1,0 +1,4 @@
+<# This code gets the user of explorer.exe which is a process that can only have one instance for security reasons
+This ensures you are getting the proper logged on user currently using the machine.#>
+
+(Get-WmiObject -Class win32_process -ErrorAction SilentlyContinue -Filter 'Name="explorer.exe"').GetOwner().User
